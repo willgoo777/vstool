@@ -77,6 +77,8 @@ T = {
     "reason_unsupported_ext": "不支持的扩展名",
     "reason_xls_no_com": "缺少 Office COM，无法处理 .xls / .doc 旧格式",
     "reason_word_no_com": "缺少 Office COM，无法对比 Word 文件",
+    "reason_word_no_app": "未检测到 Microsoft Word（{msg}），将跳过 Word 对比",
+    "reason_excel_no_app": "未检测到 Microsoft Excel（{msg}），将跳过 .xls 转换",
     "reason_com_error": "COM 调用失败：{msg}",
     "reason_unknown": "未知错误：{msg}",
 }

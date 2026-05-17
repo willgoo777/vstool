@@ -35,6 +35,40 @@ def test_pipeline_end_to_end_on_macos(paired_dirs) -> None:
     assert result.summary_path is not None and result.summary_path.exists()
 
 
+def test_pipeline_degrades_when_office_missing(paired_dirs, monkeypatch) -> None:
+    """模拟 Windows 上装了 pywin32 但没装 Word / Excel：
+    HAS_COM=True 但 Dispatch 抛 com_error。应优雅降级把 word 对标 skip，
+    不影响 xlsx 对的正常完成。"""
+    a, b, out = paired_dirs
+
+    import vstool.com_utils as cu
+    import vstool.pipeline as pl
+    import vstool.word_diff as wd
+    import vstool.excel_legacy as el
+
+    class FakeComError(Exception):
+        pass
+
+    def boom(_prog_id):
+        raise FakeComError("Invalid class string")
+
+    monkeypatch.setattr(cu, "HAS_COM", True)
+    monkeypatch.setattr(cu, "com_error", FakeComError)
+    monkeypatch.setattr(wd, "dispatch", boom)
+    monkeypatch.setattr(el, "dispatch", boom)
+    monkeypatch.setattr(wd, "require_com", lambda *a, **k: None)
+    monkeypatch.setattr(el, "require_com", lambda *a, **k: None)
+    monkeypatch.setattr(pl.com_utils, "HAS_COM", True)
+
+    result = pl.run_pipeline(a, b, out)
+
+    by_name = {o.relpath: o for o in result.outcomes}
+    # Word 对：降级为 skip 而不是炸
+    assert by_name["letter.docx"].status == STATUS_SKIP
+    # xlsx 对仍正常完成
+    assert by_name["values.xlsx"].status == STATUS_OK
+
+
 def test_pipeline_cancel_between_pairs(paired_dirs) -> None:
     """触发取消的最简方式：取消令牌一进入就置位。"""
     a, b, out = paired_dirs

@@ -89,7 +89,7 @@ def run_pipeline(
     needs_xls = any(p.ext == ".xls" for p in pr.pairs)
 
     word_differ_cm = _maybe_word_differ(needs_word, result, pr.pairs, on_event)
-    excel_converter_cm = _maybe_excel_converter(needs_xls)
+    excel_converter_cm = _maybe_excel_converter(needs_xls, on_event)
 
     try:
         with tempfile.TemporaryDirectory(prefix="vstool_xls_") as tmpdir:
@@ -220,25 +220,60 @@ class _NullCM:
         return False
 
 
+class _SafeCM:
+    """包一层：__enter__ 阶段如果底层抛错（典型场景：装了 pywin32 但没装 Word/
+    Excel，Dispatch 报 Invalid class string），把异常吞掉、回调汇报、yield None，
+    后续 pipeline 把对应 pair 标记为 skip。"""
+
+    def __init__(self, factory, on_error):
+        self._factory = factory
+        self._on_error = on_error
+        self._cm = None
+
+    def __enter__(self):
+        try:
+            self._cm = self._factory()
+            return self._cm.__enter__()
+        except Exception as e:
+            self._on_error(e)
+            self._cm = None
+            return None
+
+    def __exit__(self, *args):
+        if self._cm is not None:
+            try:
+                return self._cm.__exit__(*args)
+            except Exception:
+                return False
+        return False
+
+
 def _maybe_word_differ(needed: bool, result: PipelineResult,
                        pairs, on_event: OnEvent):
     if not needed:
         return _NullCM()
     if not com_utils.HAS_COM:
-        # 把所有 word 对标记为 skip 的工作由 _process_word 自动完成，这里只发个日志
         on_event(Event("log", T["reason_word_no_com"]))
         return _NullCM()
     from .word_diff import WordDiffer  # 局部导入，macOS 下也能 import 包
-    return WordDiffer()
+
+    def _on_err(e):
+        on_event(Event("log", T["reason_word_no_app"].format(msg=e)))
+
+    return _SafeCM(WordDiffer, _on_err)
 
 
-def _maybe_excel_converter(needed: bool):
+def _maybe_excel_converter(needed: bool, on_event: OnEvent = _noop):
     if not needed:
         return _NullCM()
     if not com_utils.HAS_COM:
         return _NullCM()
     from .excel_legacy import ExcelConverter
-    return ExcelConverter()
+
+    def _on_err(e):
+        on_event(Event("log", T["reason_excel_no_app"].format(msg=e)))
+
+    return _SafeCM(ExcelConverter, _on_err)
 
 
 __all__ = [
