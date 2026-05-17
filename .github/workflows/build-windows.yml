@@ -12,65 +12,6 @@ permissions:
   contents: write       # 打 tag 时需要写 release
 
 jobs:
-  # ============ PyInstaller（快、被某些 EDR 误报） ============
-  pyinstaller:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: "pip"
-
-      - name: Install deps
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install -e .
-          pip install pyinstaller
-
-      - name: Run tests
-        run: pytest -q
-
-      - name: Build .exe (PyInstaller --onefile)
-        run: |
-          pyinstaller `
-            --onefile `
-            --noconsole `
-            --name vstool `
-            --paths src `
-            --hidden-import win32com `
-            --hidden-import win32com.client `
-            --hidden-import pythoncom `
-            --collect-submodules openpyxl `
-            --collect-submodules PySide6 `
-            --exclude-module tkinter `
-            --exclude-module PyQt5 `
-            main.py
-
-      - name: Show output size
-        run: Get-ChildItem dist | Format-Table Name, Length
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: vstool-pyinstaller-${{ github.sha }}
-          path: dist/vstool.exe
-          if-no-files-found: error
-
-      - name: Rename for release
-        if: startsWith(github.ref, 'refs/tags/v')
-        run: Move-Item dist/vstool.exe dist/vstool-pyinstaller.exe
-
-      - name: Attach to Release (tags only)
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dist/vstool-pyinstaller.exe
-          generate_release_notes: true
-
   # ============ Nuitka（慢、AV 误报率极低，Uniaccess 推荐） ============
   nuitka:
     runs-on: windows-latest
@@ -90,6 +31,9 @@ jobs:
           pip install -e .
           pip install "nuitka>=2.4" "ordered-set" "zstandard"
 
+      - name: Run tests
+        run: pytest -q
+
       - name: Build standalone (folder, no extract at runtime)
         run: |
           python -m nuitka `
@@ -108,8 +52,8 @@ jobs:
             --remove-output `
             --company-name=vstool `
             --product-name=vstool `
-            --file-version=0.3.0.0 `
-            --product-version=0.3.0.0 `
+            --file-version=1.1.0.0 `
+            --product-version=1.1.0.0 `
             --file-description="文件夹对比工具" `
             --output-dir=dist `
             --output-filename=vstool.exe `
@@ -140,8 +84,8 @@ jobs:
             --remove-output `
             --company-name=vstool `
             --product-name=vstool `
-            --file-version=0.3.0.0 `
-            --product-version=0.3.0.0 `
+            --file-version=1.1.0.0 `
+            --product-version=1.1.0.0 `
             --file-description="文件夹对比工具" `
             --output-dir=dist `
             --output-filename=vstool-onefile.exe `
