@@ -20,7 +20,7 @@ from .config import (
 )
 from .excel_diff import diff_workbooks
 from .i18n import T
-from .pairing import FilePair, PairResult, pair
+from .pairing import FilePair, PairResult, fuzzy_pair, pair
 from .report import (
     PairOutcome,
     PipelineResult,
@@ -29,7 +29,7 @@ from .report import (
     STATUS_SKIP,
     write_html_summary,
 )
-from .scanner import scan
+from .scanner import ScannedFile, scan
 
 
 # ---------- 事件 ----------
@@ -49,12 +49,43 @@ def _noop(_: Event) -> None:
     pass
 
 
+# ---------- 仅扫描 + 配对 ----------
+
+def scan_and_pair(
+    a_dir: Path,
+    b_dir: Path,
+    on_event: OnEvent = _noop,
+) -> tuple[PairResult, dict[str, ScannedFile], dict[str, ScannedFile]]:
+    """扫描 A、B 并跑模糊配对，返回 (PairResult, a_map, b_map)。
+
+    GUI 在主线程同步调用这一步，再把 PairResult 喂给确认对话框，
+    用户编辑后由 run_pipeline 拿编辑过的版本继续跑耗时任务。
+    """
+    a_dir = a_dir.resolve()
+    b_dir = b_dir.resolve()
+
+    on_event(Event("log", T["status_scanning"]))
+    on_event(Event("log", T["log_scan_a"].format(root=a_dir)))
+    a_map = scan(a_dir)
+    on_event(Event("log", T["log_scan_b"].format(root=b_dir)))
+    b_map = scan(b_dir)
+
+    on_event(Event("log", T["status_pairing"]))
+    pr = fuzzy_pair(a_map, b_map)
+    on_event(Event("log", T["log_found"].format(
+        a=len(a_map), b=len(b_map),
+        p=len(pr.pairs), oa=len(pr.only_a), ob=len(pr.only_b),
+    )))
+    return pr, a_map, b_map
+
+
 # ---------- 主入口 ----------
 
 def run_pipeline(
     a_dir: Path,
     b_dir: Path,
     out_dir: Path,
+    pair_result: PairResult | None = None,
     token: CancellationToken | None = None,
     on_event: OnEvent = _noop,
 ) -> PipelineResult:
@@ -66,20 +97,23 @@ def run_pipeline(
 
     result = PipelineResult()
 
-    on_event(Event("log", T["status_scanning"]))
-    on_event(Event("log", T["log_scan_a"].format(root=a_dir)))
-    a_map = scan(a_dir)
-    on_event(Event("log", T["log_scan_b"].format(root=b_dir)))
-    b_map = scan(b_dir)
-
-    on_event(Event("log", T["status_pairing"]))
-    pr: PairResult = pair(a_map, b_map)
+    if pair_result is None:
+        # 编程接口默认走严格同名匹配；GUI 想要模糊匹配请先调 scan_and_pair。
+        on_event(Event("log", T["status_scanning"]))
+        on_event(Event("log", T["log_scan_a"].format(root=a_dir)))
+        a_map = scan(a_dir)
+        on_event(Event("log", T["log_scan_b"].format(root=b_dir)))
+        b_map = scan(b_dir)
+        on_event(Event("log", T["status_pairing"]))
+        pr = pair(a_map, b_map)
+        on_event(Event("log", T["log_found"].format(
+            a=len(a_map), b=len(b_map),
+            p=len(pr.pairs), oa=len(pr.only_a), ob=len(pr.only_b),
+        )))
+    else:
+        pr = pair_result
     result.only_a = [f.relpath for f in pr.only_a]
     result.only_b = [f.relpath for f in pr.only_b]
-    on_event(Event("log", T["log_found"].format(
-        a=len(a_map), b=len(b_map),
-        p=len(pr.pairs), oa=len(pr.only_a), ob=len(pr.only_b),
-    )))
 
     total = len(pr.pairs)
     on_event(Event("progress", current=0, total=total))
@@ -277,6 +311,6 @@ def _maybe_excel_converter(needed: bool, on_event: OnEvent = _noop):
 
 
 __all__ = [
-    "Event", "OnEvent", "run_pipeline",
+    "Event", "OnEvent", "run_pipeline", "scan_and_pair",
     "PipelineResult", "PairOutcome",
 ]

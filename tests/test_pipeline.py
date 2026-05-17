@@ -7,8 +7,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from vstool.cancellation import CancellationToken
-from vstool.pipeline import run_pipeline
+from vstool.pairing import MATCH_MANUAL, repair
+from vstool.pipeline import run_pipeline, scan_and_pair
 from vstool.report import STATUS_OK, STATUS_SKIP
+from vstool.scanner import scan
 
 
 def test_pipeline_end_to_end_on_macos(paired_dirs) -> None:
@@ -67,6 +69,48 @@ def test_pipeline_degrades_when_office_missing(paired_dirs, monkeypatch) -> None
     assert by_name["letter.docx"].status == STATUS_SKIP
     # xlsx 对仍正常完成
     assert by_name["values.xlsx"].status == STATUS_OK
+
+
+def test_scan_and_pair_returns_maps(paired_dirs) -> None:
+    a, b, _ = paired_dirs
+    pr, a_map, b_map = scan_and_pair(a, b)
+
+    # identical / values / sub/nested / letter 是精确同名
+    by_key = {p.key: p for p in pr.pairs}
+    for k in ("identical.xlsx", "letter.docx", "sub/nested.xlsx", "values.xlsx"):
+        assert k in by_key
+        assert by_key[k].match_type == "exact"
+
+    # fuzzy 行为：only_a.xlsx 与 only_b.xlsx 名字足够相似（共享 "only_"
+    # 前缀和 .xlsx 后缀），会被模糊匹配配上，标 match_type=fuzzy
+    assert "only_b.xlsx" in by_key
+    assert by_key["only_b.xlsx"].match_type == "fuzzy"
+    assert pr.only_a == [] and pr.only_b == []
+
+    # 原始 map 也回来了
+    assert "only_a.xlsx" in a_map
+    assert "only_b.xlsx" in b_map
+
+
+def test_pipeline_accepts_prebuilt_pair_result(paired_dirs) -> None:
+    """传入用户编辑过的 PairResult：pipeline 跳过 scan/pair，只处理给定的对。"""
+    a, b, out = paired_dirs
+    a_map = scan(a)
+    b_map = scan(b)
+    # 只手工保留 values.xlsx 这一对，其它全进 only_*
+    manual_pr = repair(a_map, b_map, [("values.xlsx", "values.xlsx")])
+
+    result = run_pipeline(a, b, out, pair_result=manual_pr)
+
+    # 只跑了那一对
+    assert len(result.outcomes) == 1
+    assert result.outcomes[0].relpath == "values.xlsx"
+    assert result.outcomes[0].status == STATUS_OK
+    # 其它文件按 only_a / only_b 走 summary
+    assert "identical.xlsx" in result.only_a
+    assert "identical.xlsx" in result.only_b
+    # 配对的 match_type 应是 manual
+    assert manual_pr.pairs[0].match_type == MATCH_MANUAL
 
 
 def test_pipeline_cancel_between_pairs(paired_dirs) -> None:

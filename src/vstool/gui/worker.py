@@ -6,6 +6,7 @@ from PySide6.QtCore import QThread, Signal
 
 from ..cancellation import CancellationToken
 from ..com_utils import com_initialized
+from ..pairing import PairResult
 from ..pipeline import Event, run_pipeline
 
 
@@ -15,11 +16,18 @@ class CompareWorker(QThread):
     finished_ok = Signal(str)                  # summary path
     failed = Signal(str)
 
-    def __init__(self, a: Path, b: Path, out: Path) -> None:
+    def __init__(
+        self,
+        a: Path,
+        b: Path,
+        out: Path,
+        pair_result: PairResult | None = None,
+    ) -> None:
         super().__init__()
         self._a = a
         self._b = b
         self._out = out
+        self._pair_result = pair_result
         self.token = CancellationToken()
 
     def _on_event(self, e: Event) -> None:
@@ -33,6 +41,7 @@ class CompareWorker(QThread):
             with com_initialized():
                 result = run_pipeline(
                     self._a, self._b, self._out,
+                    pair_result=self._pair_result,
                     token=self.token, on_event=self._on_event,
                 )
             summary = str(result.summary_path) if result.summary_path else ""

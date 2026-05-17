@@ -6,6 +6,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import (
+    QDialog,
     QFileDialog,
     QHBoxLayout,
     QLabel,
@@ -20,6 +21,8 @@ from PySide6.QtWidgets import (
 )
 
 from ..i18n import T
+from ..pipeline import scan_and_pair
+from .confirm_pairs_dialog import ConfirmPairsDialog
 from .worker import CompareWorker
 
 
@@ -124,17 +127,37 @@ class MainWindow(QMainWindow):
         if triple is None:
             return
         a, b, o = triple
+
+        # 主线程同步扫描 + 模糊配对（毫秒级，不需要线程）
         self.log.clear()
+        try:
+            pr, a_map, b_map = scan_and_pair(a, b, on_event=self._on_scan_event)
+        except FileNotFoundError as e:
+            self._warn(T["confirm_scan_failed"].format(msg=str(e)))
+            return
+        except Exception as e:
+            self._warn(T["confirm_scan_failed"].format(msg=f"{e.__class__.__name__}: {e}"))
+            return
+
+        dlg = ConfirmPairsDialog(pr, a_map, b_map, a, b, parent=self)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        final_pr = dlg.result_pair_result()
+
         self.progress.setRange(0, 0)  # 不确定模式直到收到第一次 progress
         self._set_running(True)
 
-        self.worker = CompareWorker(a, b, o)
+        self.worker = CompareWorker(a, b, o, pair_result=final_pr)
         self.worker.log_signal.connect(self._append_log)
         self.worker.progress_signal.connect(self._on_progress)
         self.worker.finished_ok.connect(self._on_finished_ok)
         self.worker.failed.connect(self._on_failed)
         self.worker.finished.connect(lambda: self._set_running(False))
         self.worker.start()
+
+    def _on_scan_event(self, e) -> None:
+        if e.kind == "log":
+            self._append_log(e.message)
 
     def _on_cancel(self) -> None:
         if self.worker:
