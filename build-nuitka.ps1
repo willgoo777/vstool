@@ -29,6 +29,9 @@ Remove-Item -Recurse -Force .\build, .\dist -ErrorAction SilentlyContinue
 # 共用参数
 $Common = @(
     "--enable-plugin=pyside6"
+    "--include-package=PySide6"
+    "--include-package=shiboken6"
+    "--include-package=vstool"
     "--include-package=openpyxl"
     "--include-package=win32com"
     "--include-package=win32com.client"
