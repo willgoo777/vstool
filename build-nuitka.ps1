@@ -60,7 +60,7 @@ Write-Host "[nuitka] 1/2 编译 standalone（文件夹分发）" -ForegroundColo
 # 重命名输出目录为更友好的名字
 if (Test-Path .\dist\main.dist) {
     Remove-Item -Recurse -Force .\dist\vstool-standalone -ErrorAction SilentlyContinue
-    Rename-Item .\dist\main.dist .\dist\vstool-standalone
+    Move-Item .\dist\main.dist .\dist\vstool-standalone
 }
 
 Write-Host "[nuitka] 2/2 编译 onefile（单 exe）" -ForegroundColor Cyan

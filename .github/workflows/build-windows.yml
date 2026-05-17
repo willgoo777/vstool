@@ -61,7 +61,7 @@ jobs:
 
       - name: Rename for release
         if: startsWith(github.ref, 'refs/tags/v')
-        run: Rename-Item dist/vstool.exe dist/vstool-pyinstaller.exe
+        run: Move-Item dist/vstool.exe dist/vstool-pyinstaller.exe
 
       - name: Attach to Release (tags only)
         if: startsWith(github.ref, 'refs/tags/v')
@@ -112,7 +112,7 @@ jobs:
 
       - name: Rename + zip standalone
         run: |
-          Rename-Item dist/main.dist dist/vstool-standalone
+          Move-Item dist/main.dist dist/vstool-standalone
           Compress-Archive -Path dist/vstool-standalone -DestinationPath dist/vstool-nuitka-standalone.zip
           Get-ChildItem dist | Format-Table Name, Length
 
