@@ -3,8 +3,8 @@
 # 相比 PyInstaller，对 AV/EDR（包括 Uniaccess 这类企业管控）误报率低得多。
 #
 # 同时出两份产物：
-#   dist\vstool-standalone\vstool.exe   — 文件夹分发，启动不解压，最难被识别
-#   dist\vstool.exe                     — 单文件分发，首次启动解压到 %TEMP%
+#   dist\vstool\vstool.exe   — 文件夹分发，启动不解压，最难被识别（Uniaccess 推荐）
+#   dist\vstool-onefile.exe  — 单文件分发，首次启动解压到 %TEMP%
 #
 # 编译时间：15-25 分钟（PyInstaller 大概 5 分钟，Nuitka 慢但值得）。
 
@@ -44,8 +44,8 @@ $Common = @(
     "--remove-output"
     "--company-name=vstool"
     "--product-name=vstool"
-    "--file-version=0.2.0.0"
-    "--product-version=0.2.0.0"
+    "--file-version=0.3.0.0"
+    "--product-version=0.3.0.0"
     "--file-description=文件夹对比工具"
 )
 # 若没准备 icon.ico，去掉对应参数（避免编译失败）
@@ -61,10 +61,12 @@ Write-Host "[nuitka] 1/2 编译 standalone（文件夹分发）" -ForegroundColo
     --output-filename=vstool.exe `
     main.py
 
-# 重命名输出目录为更友好的名字
+# 重命名输出目录为更友好的名字 + 打 zip 方便分发
 if (Test-Path .\dist\main.dist) {
-    Remove-Item -Recurse -Force .\dist\vstool-standalone -ErrorAction SilentlyContinue
-    Move-Item .\dist\main.dist .\dist\vstool-standalone
+    Remove-Item -Recurse -Force .\dist\vstool -ErrorAction SilentlyContinue
+    Move-Item .\dist\main.dist .\dist\vstool
+    Remove-Item -Force .\dist\vstool.zip -ErrorAction SilentlyContinue
+    Compress-Archive -Path .\dist\vstool -DestinationPath .\dist\vstool.zip
 }
 
 Write-Host "[nuitka] 2/2 编译 onefile（单 exe）" -ForegroundColor Cyan
@@ -73,7 +75,7 @@ Write-Host "[nuitka] 2/2 编译 onefile（单 exe）" -ForegroundColor Cyan
     --onefile `
     @Common `
     --output-dir=dist `
-    --output-filename=vstool.exe `
+    --output-filename=vstool-onefile.exe `
     main.py
 
 Write-Host "[nuitka] 完成。产物：" -ForegroundColor Green

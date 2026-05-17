@@ -108,8 +108,8 @@ jobs:
             --remove-output `
             --company-name=vstool `
             --product-name=vstool `
-            --file-version=0.2.0.0 `
-            --product-version=0.2.0.0 `
+            --file-version=0.3.0.0 `
+            --product-version=0.3.0.0 `
             --file-description="文件夹对比工具" `
             --output-dir=dist `
             --output-filename=vstool.exe `
@@ -117,8 +117,8 @@ jobs:
 
       - name: Rename + zip standalone
         run: |
-          Move-Item dist/main.dist dist/vstool-standalone
-          Compress-Archive -Path dist/vstool-standalone -DestinationPath dist/vstool-nuitka-standalone.zip
+          Move-Item dist/main.dist dist/vstool
+          Compress-Archive -Path dist/vstool -DestinationPath dist/vstool.zip
           Get-ChildItem dist | Format-Table Name, Length
 
       - name: Build onefile (single exe, extracts at runtime but native payload)
@@ -140,11 +140,11 @@ jobs:
             --remove-output `
             --company-name=vstool `
             --product-name=vstool `
-            --file-version=0.2.0.0 `
-            --product-version=0.2.0.0 `
+            --file-version=0.3.0.0 `
+            --product-version=0.3.0.0 `
             --file-description="文件夹对比工具" `
             --output-dir=dist `
-            --output-filename=vstool-nuitka.exe `
+            --output-filename=vstool-onefile.exe `
             main.py
 
       - name: Show output sizes
@@ -155,8 +155,8 @@ jobs:
         with:
           name: vstool-nuitka-${{ github.sha }}
           path: |
-            dist/vstool-nuitka.exe
-            dist/vstool-nuitka-standalone.zip
+            dist/vstool-onefile.exe
+            dist/vstool.zip
           if-no-files-found: error
 
       - name: Attach to Release (tags only)
@@ -164,6 +164,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/vstool-nuitka.exe
-            dist/vstool-nuitka-standalone.zip
+            dist/vstool-onefile.exe
+            dist/vstool.zip
           generate_release_notes: true
