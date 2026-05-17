@@ -20,6 +20,7 @@ if (-Not (Test-Path .\.venv)) {
 $Py = ".\.venv\Scripts\python.exe"
 & $Py -m pip install --upgrade pip
 & $Py -m pip install -r requirements.txt
+& $Py -m pip install -e .            # 让 Nuitka 能在 site-packages 里找到 vstool
 # Nuitka + 它的 C 编译器（Windows 上默认尝试用 MinGW64，没有就让 Nuitka 自动下载）
 & $Py -m pip install "nuitka>=2.4" "ordered-set" "zstandard"
 
