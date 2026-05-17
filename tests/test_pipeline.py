@@ -7,6 +7,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from vstool.cancellation import CancellationToken
+from vstool.config import OUTPUT_DIFF_SUBDIR, OUTPUT_NODIFF_SUBDIR
 from vstool.pairing import MATCH_MANUAL, repair
 from vstool.pipeline import run_pipeline, scan_and_pair
 from vstool.report import STATUS_OK, STATUS_SKIP
@@ -26,12 +27,25 @@ def test_pipeline_end_to_end_on_macos(paired_dirs) -> None:
         assert by_name[name].output_path is not None
         assert by_name[name].output_path.exists()
 
+    # has_diff 分桶：identical 应在「对比无差异」，values / sub/nested 在「对比有差异」
+    assert by_name["identical.xlsx"].has_diff is False
+    assert OUTPUT_NODIFF_SUBDIR in str(by_name["identical.xlsx"].output_path)
+    for diffed in ("values.xlsx", "sub/nested.xlsx"):
+        assert by_name[diffed].has_diff is True, by_name[diffed]
+        assert OUTPUT_DIFF_SUBDIR in str(by_name[diffed].output_path)
+
     # docx 对：mac 上没 Word COM → skip
     assert by_name["letter.docx"].status == STATUS_SKIP
 
     # 孤儿
     assert "only_a.xlsx" in result.only_a
     assert "only_b.xlsx" in result.only_b
+
+    # a_total / b_total（默认走严格匹配分支：pair 数 + only_* 数）
+    # paired_dirs 里 A 共 5 个文件（identical/values/sub/nested/only_a/letter）→ 5
+    # B 共 5 个文件（identical/values/sub/nested/only_b/letter）→ 5
+    assert result.a_total == 5
+    assert result.b_total == 5
 
     # summary.html 存在
     assert result.summary_path is not None and result.summary_path.exists()

@@ -88,6 +88,11 @@ class ExcelDiffResult:
     struct_diffs: list[SheetStructDiff] = field(default_factory=list)
     has_changes: bool = False
 
+    @property
+    def diff_count(self) -> int:
+        """cell + struct 总差异数，供上游 PairOutcome.has_diff 判断。"""
+        return len(self.cell_diffs) + len(self.struct_diffs)
+
 
 # ---------- 格式签名 ----------
 

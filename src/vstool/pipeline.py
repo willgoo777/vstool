@@ -5,6 +5,7 @@ run_pipeline 同时被 GUI worker 和测试调用，通过 on_event 回调把过
 """
 from __future__ import annotations
 
+import shutil
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,8 +14,9 @@ from typing import Callable
 from . import com_utils
 from .cancellation import CancellationToken, OperationCancelled
 from .config import (
-    OUTPUT_EXCEL_SUBDIR,
-    OUTPUT_WORD_SUBDIR,
+    OUTPUT_DIFF_SUBDIR,
+    OUTPUT_NODIFF_SUBDIR,
+    OUTPUT_PROTECTED_WORKSPACE,
     SUPPORTED_EXCEL_EXTS,
     SUPPORTED_WORD_EXTS,
 )
@@ -88,6 +90,8 @@ def run_pipeline(
     pair_result: PairResult | None = None,
     token: CancellationToken | None = None,
     on_event: OnEvent = _noop,
+    a_total: int | None = None,
+    b_total: int | None = None,
 ) -> PipelineResult:
     token = token or CancellationToken()
     a_dir = a_dir.resolve()
@@ -110,10 +114,18 @@ def run_pipeline(
             a=len(a_map), b=len(b_map),
             p=len(pr.pairs), oa=len(pr.only_a), ob=len(pr.only_b),
         )))
+        if a_total is None:
+            a_total = len(a_map)
+        if b_total is None:
+            b_total = len(b_map)
     else:
         pr = pair_result
     result.only_a = [f.relpath for f in pr.only_a]
     result.only_b = [f.relpath for f in pr.only_b]
+    result.a_total = a_total if a_total is not None else (
+        len(pr.pairs) + len(pr.only_a))
+    result.b_total = b_total if b_total is not None else (
+        len(pr.pairs) + len(pr.only_b))
 
     total = len(pr.pairs)
     on_event(Event("progress", current=0, total=total))
@@ -125,9 +137,13 @@ def run_pipeline(
     word_differ_cm = _maybe_word_differ(needs_word, result, pr.pairs, on_event)
     excel_converter_cm = _maybe_excel_converter(needs_xls, on_event)
 
+    protected_workspace_dir = out_dir / OUTPUT_PROTECTED_WORKSPACE
+
     try:
-        with tempfile.TemporaryDirectory(prefix="vstool_xls_") as tmpdir:
+        with tempfile.TemporaryDirectory(prefix="vstool_xls_") as tmpdir, \
+                tempfile.TemporaryDirectory(prefix="vstool_word_pre_") as word_tmp:
             tmp = Path(tmpdir)
+            word_work = Path(word_tmp)
             with word_differ_cm as word_differ, excel_converter_cm as xls_conv:
                 for i, p in enumerate(pr.pairs, 1):
                     try:
@@ -140,7 +156,11 @@ def run_pipeline(
 
                     on_event(Event("log", T["status_pair_progress"].format(
                         i=i, n=total, name=p.relpath)))
-                    outcome = _process_pair(p, out_dir, tmp, word_differ, xls_conv)
+                    outcome = _process_pair(
+                        p, out_dir, tmp, word_differ, xls_conv,
+                        word_work=word_work,
+                        protected_workspace_dir=protected_workspace_dir,
+                    )
                     result.outcomes.append(outcome)
                     _emit_pair_log(outcome, on_event)
                     on_event(Event("progress", current=i, total=total))
@@ -168,10 +188,17 @@ def _process_pair(
     tmpdir: Path,
     word_differ,
     xls_conv,
+    *,
+    word_work: Path,
+    protected_workspace_dir: Path,
 ) -> PairOutcome:
     try:
         if p.ext in SUPPORTED_WORD_EXTS:
-            return _process_word(p, out_root, word_differ)
+            return _process_word(
+                p, out_root, word_differ,
+                word_work=word_work,
+                protected_workspace_dir=protected_workspace_dir,
+            )
         if p.ext in SUPPORTED_EXCEL_EXTS:
             return _process_excel(p, out_root, tmpdir, xls_conv)
         return PairOutcome(p.relpath, STATUS_SKIP, None, T["reason_unsupported_ext"])
@@ -181,26 +208,52 @@ def _process_pair(
                            T["reason_unknown"].format(msg=msg))
 
 
-def _word_out_path(p: FilePair, out_root: Path) -> Path:
+def _diff_out_path(p: FilePair, out_root: Path, suffix: str) -> Path:
+    """乐观写到 OUTPUT_DIFF_SUBDIR；事后若无差异再 move。"""
     rel = Path(p.relpath)
-    return out_root / OUTPUT_WORD_SUBDIR / rel.parent / f"{rel.stem}_diff.docx"
+    return out_root / OUTPUT_DIFF_SUBDIR / rel.parent / f"{rel.stem}_diff{suffix}"
 
 
-def _excel_out_path(p: FilePair, out_root: Path) -> Path:
+def _nodiff_dest(p: FilePair, out_root: Path, suffix: str) -> Path:
     rel = Path(p.relpath)
-    return out_root / OUTPUT_EXCEL_SUBDIR / rel.parent / f"{rel.stem}_diff.xlsx"
+    return out_root / OUTPUT_NODIFF_SUBDIR / rel.parent / f"{rel.stem}_diff{suffix}"
 
 
-def _process_word(p: FilePair, out_root: Path, word_differ) -> PairOutcome:
+def _move_to_nodiff(p: FilePair, out_root: Path, src: Path) -> Path:
+    dest = _nodiff_dest(p, out_root, src.suffix)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(src), str(dest))
+    return dest
+
+
+def _process_word(
+    p: FilePair,
+    out_root: Path,
+    word_differ,
+    *,
+    word_work: Path,
+    protected_workspace_dir: Path,
+) -> PairOutcome:
     if word_differ is None:
         return PairOutcome(p.relpath, STATUS_SKIP, None, T["reason_word_no_com"])
-    out = _word_out_path(p, out_root)
+    out = _diff_out_path(p, out_root, ".docx")
     try:
-        word_differ.compare(p.a_path, p.b_path, out)
-        return PairOutcome(p.relpath, STATUS_OK, out, "")
+        res = word_differ.compare(
+            p.a_path, p.b_path, out,
+            work_dir=word_work,
+            protected_workspace_dir=protected_workspace_dir,
+            rel_path=p.relpath,
+        )
     except Exception as e:
         reason = getattr(e, "reason", None) or str(e)
         return PairOutcome(p.relpath, STATUS_FAIL, None, reason)
+
+    has_diff = bool(res.has_changes)
+    final_out = out if has_diff else _move_to_nodiff(p, out_root, out)
+    return PairOutcome(
+        p.relpath, STATUS_OK, final_out, "",
+        has_diff=has_diff, notice=res.notice,
+    )
 
 
 def _process_excel(p: FilePair, out_root: Path, tmpdir: Path, xls_conv) -> PairOutcome:
@@ -220,12 +273,18 @@ def _process_excel(p: FilePair, out_root: Path, tmpdir: Path, xls_conv) -> PairO
             reason = getattr(e, "reason", None) or str(e)
             return PairOutcome(p.relpath, STATUS_FAIL, None, reason)
 
-    out = _excel_out_path(p, out_root)
+    out = _diff_out_path(p, out_root, ".xlsx")
     try:
-        diff_workbooks(a_path, b_path, out)
-        return PairOutcome(p.relpath, STATUS_OK, out, "")
+        res = diff_workbooks(a_path, b_path, out)
     except Exception as e:
         return PairOutcome(p.relpath, STATUS_FAIL, None, str(e))
+
+    has_diff = bool(res.has_changes)
+    final_out = out if has_diff else _move_to_nodiff(p, out_root, out)
+    return PairOutcome(
+        p.relpath, STATUS_OK, final_out, "",
+        has_diff=has_diff,
+    )
 
 
 def _safe_name(relpath: str) -> str:

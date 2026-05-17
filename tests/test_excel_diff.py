@@ -23,11 +23,21 @@ def test_identical_files_have_no_changes(workdir: Path) -> None:
 
     result = diff_workbooks(a, b, out)
     assert result.has_changes is False
+    assert result.diff_count == 0
     assert out.exists()
     # 输出至少有总览和明细两个 sheet
     wb_out = load_workbook(out)
     assert T["excel_sheet_summary"] in wb_out.sheetnames
     assert T["excel_sheet_details"] in wb_out.sheetnames
+
+
+def test_diff_count_matches_cell_plus_struct(paired_dirs) -> None:
+    a_dir, b_dir, out = paired_dirs
+    out_file = out / "values_diff.xlsx"
+    result = diff_workbooks(a_dir / "values.xlsx", b_dir / "values.xlsx", out_file)
+    assert result.has_changes is True
+    assert result.diff_count == len(result.cell_diffs) + len(result.struct_diffs)
+    assert result.diff_count >= 1
 
 
 def test_value_diff_detected_and_colored(paired_dirs) -> None:

@@ -147,7 +147,10 @@ class MainWindow(QMainWindow):
         self.progress.setRange(0, 0)  # 不确定模式直到收到第一次 progress
         self._set_running(True)
 
-        self.worker = CompareWorker(a, b, o, pair_result=final_pr)
+        self.worker = CompareWorker(
+            a, b, o, pair_result=final_pr,
+            a_total=len(a_map), b_total=len(b_map),
+        )
         self.worker.log_signal.connect(self._append_log)
         self.worker.progress_signal.connect(self._on_progress)
         self.worker.finished_ok.connect(self._on_finished_ok)

@@ -115,22 +115,26 @@ class ConfirmPairsDialog(QDialog):
         scroll.setWidgetResizable(True)
         scroll.setWidget(self._rows_container)
 
-        # 孤立文件折叠区 + 添加按钮
-        self._only_a_label = QLabel()
-        self._only_b_label = QLabel()
-        for lbl in (self._only_a_label, self._only_b_label):
-            lbl.setStyleSheet("color: #666; padding: 2px 4px;")
-            lbl.setWordWrap(True)
+        # 孤立文件两列卡片 + 全局快捷按钮
+        self._only_a_column, self._only_a_list_layout = self._make_orphan_column(
+            T["confirm_orphan_a_title"])
+        self._only_b_column, self._only_b_list_layout = self._make_orphan_column(
+            T["confirm_orphan_b_title"])
+
+        orphan_cols = QHBoxLayout()
+        orphan_cols.addWidget(self._only_a_column, 1)
+        orphan_cols.addSpacing(12)
+        orphan_cols.addWidget(self._only_b_column, 1)
 
         btn_add = QPushButton(T["confirm_add_pair"])
         btn_add.clicked.connect(self._on_add_pair)
 
-        orphan_row = QHBoxLayout()
-        orphan_box = QVBoxLayout()
-        orphan_box.addWidget(self._only_a_label)
-        orphan_box.addWidget(self._only_b_label)
-        orphan_row.addLayout(orphan_box, 1)
-        orphan_row.addWidget(btn_add, 0, Qt.AlignTop)
+        orphan_row = QVBoxLayout()
+        orphan_row.addLayout(orphan_cols, 1)
+        btn_row = QHBoxLayout()
+        btn_row.addStretch(1)
+        btn_row.addWidget(btn_add)
+        orphan_row.addLayout(btn_row)
 
         # 底部按钮
         btns = QDialogButtonBox()
@@ -145,9 +149,9 @@ class ConfirmPairsDialog(QDialog):
         body = QVBoxLayout(self)
         body.addWidget(intro)
         body.addLayout(header)
-        body.addWidget(scroll, 1)
+        body.addWidget(scroll, 2)
         body.addWidget(_hline())
-        body.addLayout(orphan_row)
+        body.addLayout(orphan_row, 1)
         body.addWidget(btns)
 
         self._rebuild_rows()
@@ -220,10 +224,52 @@ class ConfirmPairsDialog(QDialog):
         if dlg.exec() != QDialog.Accepted:
             return
         ak, bk = dlg.selection()
-        self._only_a.discard(ak)
-        self._only_b.discard(bk)
-        self._rows.append(_Row(ak, bk, MATCH_MANUAL, 1.0))
+        self._on_add_pair_explicit(ak, bk)
+
+    def _on_add_pair_explicit(self, a_key: str, b_key: str) -> None:
+        """卡片侧入口：跳过弹窗，直接合并已选定的 (a_key, b_key)。"""
+        if a_key not in self._only_a or b_key not in self._only_b:
+            return
+        self._only_a.discard(a_key)
+        self._only_b.discard(b_key)
+        self._rows.append(_Row(a_key, b_key, MATCH_MANUAL, 1.0))
         self._rebuild_rows()
+
+    def _on_pair_from_a(self, a_key: str) -> None:
+        """A 侧孤立文件点「+ 配对」：弹单侧选择器选一个 B。"""
+        if not self._only_b:
+            QMessageBox.information(
+                self, T["confirm_title"], T["confirm_add_dialog_no_orphans"]
+            )
+            return
+        candidates = sorted(self._only_b, key=lambda k: self._b_map[k].relpath.lower())
+        dlg = _PickCounterpartDialog(
+            title=T["confirm_pick_b_title"].format(name=self._a_map[a_key].relpath),
+            keys=candidates, name_map=self._b_map, parent=self,
+        )
+        if dlg.exec() != QDialog.Accepted:
+            return
+        b_key = dlg.selection()
+        if b_key:
+            self._on_add_pair_explicit(a_key, b_key)
+
+    def _on_pair_from_b(self, b_key: str) -> None:
+        """B 侧孤立文件点「+ 配对」：弹单侧选择器选一个 A。"""
+        if not self._only_a:
+            QMessageBox.information(
+                self, T["confirm_title"], T["confirm_add_dialog_no_orphans"]
+            )
+            return
+        candidates = sorted(self._only_a, key=lambda k: self._a_map[k].relpath.lower())
+        dlg = _PickCounterpartDialog(
+            title=T["confirm_pick_a_title"].format(name=self._b_map[b_key].relpath),
+            keys=candidates, name_map=self._a_map, parent=self,
+        )
+        if dlg.exec() != QDialog.Accepted:
+            return
+        a_key = dlg.selection()
+        if a_key:
+            self._on_add_pair_explicit(a_key, b_key)
 
     # ---------- 渲染 ----------
 
@@ -327,22 +373,96 @@ class ConfirmPairsDialog(QDialog):
         return menu
 
     def _refresh_orphan_labels(self) -> None:
-        a_names = ", ".join(
-            self._a_map[k].relpath
-            for k in sorted(self._only_a, key=lambda k: self._a_map[k].relpath.lower())
+        self._rebuild_orphan_column(
+            self._only_a_list_layout, self._only_a, self._a_map,
+            self._on_pair_from_a,
         )
-        b_names = ", ".join(
-            self._b_map[k].relpath
-            for k in sorted(self._only_b, key=lambda k: self._b_map[k].relpath.lower())
+        self._rebuild_orphan_column(
+            self._only_b_list_layout, self._only_b, self._b_map,
+            self._on_pair_from_b,
         )
-        self._only_a_label.setText(
-            T["confirm_only_a"].format(n=len(self._only_a))
-            + (f"  —  {a_names}" if a_names else "")
+
+    def _rebuild_orphan_column(
+        self,
+        layout: QVBoxLayout,
+        only_set: set[str],
+        name_map: dict[str, ScannedFile],
+        on_pair,
+    ) -> None:
+        # 清空（保留末尾 stretch）
+        while layout.count() > 1:
+            item = layout.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+
+        if not only_set:
+            empty = QLabel(T["confirm_orphan_empty"])
+            empty.setStyleSheet("color: #999; padding: 8px;")
+            empty.setAlignment(Qt.AlignCenter)
+            layout.insertWidget(layout.count() - 1, empty)
+            return
+
+        keys = sorted(only_set, key=lambda k: name_map[k].relpath.lower())
+        for k in keys:
+            card = self._build_orphan_card(k, name_map, on_pair)
+            layout.insertWidget(layout.count() - 1, card)
+
+    def _build_orphan_card(
+        self,
+        key: str,
+        name_map: dict[str, ScannedFile],
+        on_pair,
+    ) -> QWidget:
+        sf = name_map[key]
+        card = QFrame()
+        card.setObjectName("orphanCard")
+        card.setStyleSheet(
+            "#orphanCard { background: #F5F5F5; border: 1px solid #DDD;"
+            " border-radius: 4px; padding: 4px; }"
         )
-        self._only_b_label.setText(
-            T["confirm_only_b"].format(n=len(self._only_b))
-            + (f"  —  {b_names}" if b_names else "")
-        )
+        lay = QHBoxLayout(card)
+        lay.setContentsMargins(6, 4, 6, 4)
+        lay.setSpacing(6)
+
+        lbl = QLabel(sf.relpath)
+        lbl.setToolTip(str(sf.abspath))
+        lbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        lbl.setWordWrap(True)
+
+        btn = QPushButton(T["confirm_orphan_pair_btn"])
+        btn.setFixedWidth(80)
+        btn.clicked.connect(lambda _=False, k=key: on_pair(k))
+
+        lay.addWidget(lbl, 1)
+        lay.addWidget(btn, 0)
+        return card
+
+    def _make_orphan_column(self, title: str) -> tuple[QWidget, QVBoxLayout]:
+        """创建一列孤立文件容器，返回 (外层 widget, 内部卡片 layout)。"""
+        container = QFrame()
+        container.setFrameShape(QFrame.StyledPanel)
+        outer = QVBoxLayout(container)
+        outer.setContentsMargins(6, 6, 6, 6)
+        outer.setSpacing(4)
+
+        title_lbl = QLabel(title)
+        title_lbl.setStyleSheet("font-weight: bold; color: #444; padding: 2px;")
+        title_lbl.setWordWrap(True)
+        outer.addWidget(title_lbl)
+
+        inner = QWidget()
+        list_layout = QVBoxLayout(inner)
+        list_layout.setContentsMargins(0, 0, 0, 0)
+        list_layout.setSpacing(4)
+        list_layout.addStretch(1)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(inner)
+        scroll.setMinimumHeight(120)
+        outer.addWidget(scroll, 1)
+        return container, list_layout
 
     # ---------- 工具 ----------
 
@@ -418,6 +538,44 @@ class _AddPairDialog(QDialog):
             self._a_combo.currentData(),
             self._b_combo.currentData(),
         )
+
+
+class _PickCounterpartDialog(QDialog):
+    """从单侧候选里选一个文件，给 A 或 B 侧孤立文件配对用。"""
+
+    def __init__(
+        self,
+        title: str,
+        keys: list[str],
+        name_map: dict[str, ScannedFile],
+        parent,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.resize(520, 160)
+
+        self._combo = QComboBox()
+        for k in keys:
+            self._combo.addItem(name_map[k].relpath, userData=k)
+
+        form = QFormLayout()
+        form.addRow(title, self._combo)
+
+        btns = QDialogButtonBox()
+        ok = QPushButton(T["confirm_pick_dialog_ok"])
+        ok.setDefault(True)
+        ok.clicked.connect(self.accept)
+        cancel = QPushButton(T["confirm_cancel"])
+        cancel.clicked.connect(self.reject)
+        btns.addButton(cancel, QDialogButtonBox.RejectRole)
+        btns.addButton(ok, QDialogButtonBox.AcceptRole)
+
+        body = QVBoxLayout(self)
+        body.addLayout(form)
+        body.addWidget(btns)
+
+    def selection(self) -> str | None:
+        return self._combo.currentData()
 
 
 def _match_label(row: _Row) -> str:
